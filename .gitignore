@@ -1,12 +1,33 @@
+# Python virtual environment
 walletvenv/
 .venv/
 venv/
+
+# Python bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+
+# Environment variables (NEVER commit API keys)
 .env
 .env.local
+.env.*.local
+
+# OS files
 .DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor / IDE
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
+
+# Logs
 *.log
+
+# Node (in case you ever add JS tooling)
 node_modules/
