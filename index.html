@@ -4,13 +4,208 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>WalletPulse Guardian</title>
+    <link rel="icon" type="image/svg+xml" href="/api/guardian/icon.svg?verdict=GREEN">
+    <link rel="apple-touch-icon" href="/api/guardian/icon.svg?verdict=GREEN">
     <link rel="stylesheet" href="./styles.css">
   </head>
   <body>
     <main class="app-shell">
-      <h1>WalletPulse Guardian</h1>
-      <p>Pre-sign wallet risk for Solana. Coming together.</p>
+      <section class="workspace" aria-label="Wallet risk scanner">
+        <aside class="scanner-panel">
+          <div class="brand-row">
+            <div class="brand-mark" aria-hidden="true">WP</div>
+            <div>
+              <p class="eyebrow">Solana hackathon prototype</p>
+              <h1>WalletPulse Guardian</h1>
+            </div>
+          </div>
+
+          <form id="scan-form" class="scan-form">
+            <label for="wallet-address">Wallet address</label>
+            <div class="address-row">
+              <input
+                id="wallet-address"
+                name="walletAddress"
+                type="text"
+                spellcheck="false"
+                autocomplete="off"
+                placeholder="Paste a Solana address"
+                value="M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K"
+              >
+              <button type="submit" class="primary-button" title="Scan wallet">
+                <span class="button-icon" aria-hidden="true">?</span>
+                <span>Scan</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="settings-grid" aria-label="API settings">
+            <label>
+              <span>Helius API key</span>
+              <input id="helius-key" type="password" autocomplete="off" placeholder="Optional for live data">
+            </label>
+            <label>
+              <span>OpenAI API key</span>
+              <input id="openai-key" type="password" autocomplete="off" placeholder="Optional local AI explanation">
+            </label>
+            <label>
+              <span>OpenAI model</span>
+              <input id="openai-model" type="text" autocomplete="off" value="gpt-5">
+            </label>
+            <label>
+              <span>ElevenLabs API key</span>
+              <input id="eleven-key" type="password" autocomplete="off" placeholder="Optional voice demo">
+            </label>
+            <label>
+              <span>Voice ID</span>
+              <input id="voice-id" type="text" autocomplete="off" value="21m00Tcm4TlvDq8ikWAM">
+            </label>
+            <label>
+              <span>History depth</span>
+              <input id="history-limit" type="number" min="10" max="100" step="10" value="50">
+            </label>
+          </div>
+
+          <div class="mode-row" role="group" aria-label="Data mode">
+            <button type="button" class="segmented active" data-mode="sample">Sample data</button>
+            <button type="button" class="segmented" data-mode="live">Live Helius</button>
+          </div>
+
+          <div class="action-row">
+            <button type="button" id="voice-button" class="ghost-button" title="Speak latest warning">
+              <span class="button-icon" aria-hidden="true">)</span>
+              <span>Voice warning</span>
+            </button>
+            <button type="button" id="ai-button" class="ghost-button" title="Generate AI explanation">
+              <span class="button-icon" aria-hidden="true">*</span>
+              <span>AI explain</span>
+            </button>
+            <button type="button" id="prompt-button" class="ghost-button" title="Copy AI prompt">
+              <span class="button-icon" aria-hidden="true">{ }</span>
+              <span>Copy prompt</span>
+            </button>
+          </div>
+
+          <p id="status-line" class="status-line">Ready. Sample mode lets you demo without keys.</p>
+        </aside>
+
+        <section class="result-panel">
+          <div class="hero-strip">
+            <canvas id="pulse-canvas" width="960" height="220" aria-hidden="true"></canvas>
+            <div class="hero-copy">
+              <p>Explainable pre-sign risk</p>
+              <strong>Rules decide. AI explains.</strong>
+            </div>
+          </div>
+
+          <section id="verdict-card" class="verdict-card green" aria-live="polite">
+            <div class="verdict-topline">
+              <div class="status-orb" aria-hidden="true"></div>
+              <div>
+                <p class="eyebrow">Guardian verdict</p>
+                <h2 id="verdict-title">GREEN</h2>
+              </div>
+              <div class="score-block">
+                <span id="risk-score">18</span>
+                <small>risk score</small>
+              </div>
+            </div>
+            <p id="risk-summary" class="risk-summary">
+              This sample wallet has ordinary transfer activity with no severe wallet-drain or dusting pattern.
+            </p>
+          </section>
+
+          <div class="content-grid">
+            <section class="analysis-section">
+              <div class="section-heading">
+                <h3>Risk Signals</h3>
+                <span id="signal-count">4 signals</span>
+              </div>
+              <div id="signals-list" class="signals-list"></div>
+            </section>
+
+            <section class="analysis-section">
+              <div class="section-heading">
+                <h3>Guardian Reasoning</h3>
+                <span id="data-source">sample</span>
+              </div>
+              <p id="reasoning-text" class="reasoning-text"></p>
+              <div class="next-action">
+                <span>Recommended action</span>
+                <strong id="next-action">Proceed, but re-scan before signing a high-value transaction.</strong>
+              </div>
+            </section>
+          </div>
+
+          <section class="analysis-section full-width">
+            <div class="section-heading">
+              <h3>Recent Activity</h3>
+              <span id="transaction-count">0 transactions</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Type</th>
+                    <th>Counterparty</th>
+                    <th>Amount</th>
+                    <th>Program</th>
+                    <th>Time</th>
+                  </tr>
+                </thead>
+                <tbody id="activity-table"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="analysis-section full-width">
+            <div class="section-heading">
+              <h3>Simulate before signing</h3>
+              <span id="simulation-status">paste a base64 transaction</span>
+            </div>
+            <label for="simulation-input" style="display:block;margin-bottom:8px;color:#d7e2dc;font-size:0.82rem;font-weight:800;">Base64 transaction</label>
+            <div class="address-row" style="margin-bottom:14px;">
+              <input id="simulation-input" type="text" autocomplete="off" spellcheck="false" placeholder="Paste a serialized transaction to preview what would happen if you signed it">
+              <button type="button" id="simulate-button" class="primary-button">
+                <span class="button-icon" aria-hidden="true">~</span>
+                <span>Simulate</span>
+              </button>
+            </div>
+            <div id="combined-warning" class="next-action" style="display:none;margin-top:0;margin-bottom:14px;border-color:var(--yellow);">
+              <span>Combined warning</span>
+              <strong id="combined-warning-text"></strong>
+            </div>
+            <div id="tx-verdict-card" class="verdict-card" style="display:none;margin-top:0;margin-bottom:14px;padding:18px;">
+              <div class="verdict-topline">
+                <div class="status-orb" aria-hidden="true"></div>
+                <div>
+                  <p class="eyebrow">If you sign this</p>
+                  <h2 id="tx-verdict-title" style="font-size:clamp(1.6rem,4vw,2.4rem);">GREEN</h2>
+                </div>
+                <div class="score-block">
+                  <span id="tx-risk-score">0</span>
+                  <small>tx risk score</small>
+                </div>
+              </div>
+              <p id="simulation-summary" class="risk-summary" style="margin-top:14px;">No simulation run yet. Paste a base64-encoded Solana transaction above to preview what would happen if you signed it.</p>
+            </div>
+            <p id="simulation-meta" class="reasoning-text" style="margin-bottom:14px;font-size:0.82rem;color:var(--muted);"></p>
+            <div id="simulation-changes" class="signals-list"></div>
+          </section>
+        </section>
+      </section>
     </main>
+
+    <template id="signal-template">
+      <article class="signal-item">
+        <div class="signal-severity"></div>
+        <div>
+          <strong></strong>
+          <p></p>
+        </div>
+      </article>
+    </template>
+
     <script src="./app.js"></script>
   </body>
 </html>
