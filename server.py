@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+  #!/usr/bin/env python3
 import json
 import mimetypes
 import os
@@ -243,6 +243,11 @@ KNOWN_GOOD_ALIASES = {
     "DRIFT", "MANGO",
 }
 KNOWN_RISKY_PROGRAMS = {"UNVERIFIED_PROGRAM", "RiskyVault111", "FakeAirdropRouter", "MixerBridge"}
+# Public-blocklist of wallets flagged in security reports. Add more as new incidents are confirmed.
+# Sources: community-reported drainer addresses, public phishing indicators.
+KNOWN_RISKY_ADDRESSES = {
+    "GKJBELftW5Rjg24wP88NRaKGsEBtrPLgMiv3DhbJwbzQ",  # late-2025 drainer, multi-million USD theft
+}
 ACTIVE_TRADER_TYPES = {"SWAP", "NFT_SALE", "NFT_LISTING", "NFT_BID", "NFT_CANCEL_LISTING", "COMPRESSED_NFT_MINT"}
 
 
@@ -346,6 +351,48 @@ def find_rapid_dispersion(transactions, wallet, window_seconds=600):
     return strongest if len(strongest["recipients"]) >= 3 else None
 
 
+def find_spoke_pattern(transactions, wallet):
+    """Detect drainer 'spoke' pattern: many distinct senders fund this wallet, while outbound goes to a tiny set.
+
+    Returns a dict with inboundSenders, outboundDestinations, ratio, or None if pattern doesn't fire.
+    """
+    wallet_prefix = wallet[:6]
+    inbound_senders = set()
+    outbound_destinations = set()
+    inbound_count = 0
+    outbound_count = 0
+
+    for tx in transactions:
+        for transfer in tx.get("nativeTransfers") or []:
+            from_acct = str(transfer.get("fromUserAccount", ""))
+            to_acct = str(transfer.get("toUserAccount", ""))
+            if wallet_prefix in to_acct and from_acct:
+                inbound_senders.add(from_acct)
+                inbound_count += 1
+            elif wallet_prefix in from_acct and to_acct:
+                outbound_destinations.add(to_acct)
+                outbound_count += 1
+        for transfer in tx.get("tokenTransfers") or []:
+            from_acct = str(transfer.get("fromUserAccount", ""))
+            to_acct = str(transfer.get("toUserAccount", ""))
+            if wallet_prefix in to_acct and from_acct:
+                inbound_senders.add(from_acct)
+                inbound_count += 1
+            elif wallet_prefix in from_acct and to_acct:
+                outbound_destinations.add(to_acct)
+                outbound_count += 1
+
+    # Spoke pattern: at least 15 distinct inbound senders, but outbound goes to <= 2 destinations.
+    if len(inbound_senders) >= 15 and len(outbound_destinations) <= 2 and outbound_count >= 3:
+        return {
+            "inboundSenders": len(inbound_senders),
+            "outboundDestinations": len(outbound_destinations),
+            "inboundCount": inbound_count,
+            "outboundCount": outbound_count,
+        }
+    return None
+
+
 def analyze_wallet(transactions, wallet, first_seen_timestamp=None):
     signals = []
     now = time.time()
@@ -371,6 +418,24 @@ def analyze_wallet(transactions, wallet, first_seen_timestamp=None):
     ]
     rapid_cluster = find_rapid_outbound_cluster(transactions, wallet)
     dispersion = find_rapid_dispersion(transactions, wallet)
+    spoke = find_spoke_pattern(transactions, wallet)
+
+    # Community blocklist hit overrides everything else with a high penalty.
+    if wallet in KNOWN_RISKY_ADDRESSES:
+        signals.append(make_signal(
+            "high",
+            "Address in community blocklist",
+            "This wallet matches an address publicly flagged in security reports for phishing, asset theft, or drainer activity.",
+            80,
+        ))
+
+    if spoke:
+        signals.append(make_signal(
+            "high",
+            "Drainer spoke pattern",
+            f"{spoke['inboundSenders']} distinct senders funded this wallet but outflows go to only {spoke['outboundDestinations']} destination(s) - the classic 'collect-and-forward' shape used by drainer loot wallets.",
+            36,
+        ))
 
     if risky:
         signals.append(make_signal("high", "Known risky program interaction", f"{len(risky)} transaction(s) touched a program on the local risk list.", 34))
@@ -406,12 +471,51 @@ def analyze_wallet(transactions, wallet, first_seen_timestamp=None):
         signals.append(make_signal("high", "Rapid dispersion pattern", f"Funds arrived and were swept to {len(dispersion['recipients'])} recipients within 10 minutes.", 30))
     if token_transfers:
         signals.append(make_signal("low", "Token-account activity included", f"{len(token_transfers)} transaction(s) included token transfers or swaps.", 4))
+
+    # "Human signature" check: real users interact with diverse programs (DeFi, NFTs, swaps).
+    # A wallet that only ever uses SystemProgram (plain SOL transfers) and has substantial activity
+    # is suspicious - that's the shape of a hot wallet, faucet endpoint, or drainer router.
+    if len(transactions) >= 25 and not token_transfers:
+        unique_programs = {get_program(tx) for tx in transactions}
+        # All programs are either SystemProgram or unknown/system-equivalent labels.
+        system_only = all(
+            normalize_program_name(program) in {"SYSTEM_PROGRAM", "UNKNOWN", "TRANSFER"}
+            or program == "11111111111111111111111111111111"
+            for program in unique_programs
+        )
+        if system_only and len(unique_programs) <= 2:
+            signals.append(make_signal(
+                "medium",
+                "No DeFi or NFT footprint",
+                f"{len(transactions)} transactions, all of them plain SOL transfers - no DEX, NFT, or DeFi interaction. Real users typically have a more diverse footprint.",
+                12,
+            ))
+
     if recent:
         signals.append(make_signal("low", "Recent wallet activity", f"{len(recent)} transaction(s) occurred in the last 24 hours.", 3))
     if age_days is not None and age_days > 365:
         signals.append(make_signal("low", "Established wallet age", f"First seen {int(age_days)} days ago; age added no risk.", 0))
     elif age_days is not None and age_days < 7:
         signals.append(make_signal("medium", "Very new wallet", f"First seen about {max(1, int(age_days))} day(s) ago.", 14))
+
+    # Volume-to-age ratio: a young wallet with high transaction throughput is a bot or drainer red flag.
+    if age_days is not None and age_days > 0 and len(transactions) >= 30:
+        tx_per_day = len(transactions) / max(0.1, age_days)
+        if age_days < 2 and tx_per_day > 50:
+            signals.append(make_signal(
+                "high",
+                "Bot-like activity rate",
+                f"This wallet processed {len(transactions)} transactions in under {max(1, int(age_days))} day(s) - far above human signing rates. Likely a bot or fresh drainer.",
+                28,
+            ))
+        elif age_days < 7 and tx_per_day > 30:
+            signals.append(make_signal(
+                "medium",
+                "High activity for a young wallet",
+                f"~{int(tx_per_day)} transactions/day on a wallet only {int(age_days)} day(s) old is on the edge of bot-like behavior.",
+                14,
+            ))
+
     if not signals:
         signals.append(make_signal("low", "No major risk pattern", "The scanned history did not match the current high-risk heuristics.", 2))
 

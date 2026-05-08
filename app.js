@@ -91,6 +91,11 @@ const knownRiskyPrograms = new Set([
   "MixerBridge"
 ]);
 
+// Public-blocklist of wallets flagged in security reports.
+const knownRiskyAddresses = new Set([
+  "GKJBELftW5Rjg24wP88NRaKGsEBtrPLgMiv3DhbJwbzQ"
+]);
+
 const knownGoodProgramAliases = new Set([
   "SYSTEM_PROGRAM",
   "TOKEN_PROGRAM",
@@ -559,6 +564,49 @@ function findRapidDispersion(transactions, walletAddress, windowSeconds = 10 * 6
   return strongest.recipients.size >= 3 ? strongest : null;
 }
 
+function findSpokePattern(transactions, walletAddress) {
+  const walletPrefix = walletAddress.slice(0, 6);
+  const inboundSenders = new Set();
+  const outboundDestinations = new Set();
+  let inboundCount = 0;
+  let outboundCount = 0;
+
+  transactions.forEach((tx) => {
+    (tx.nativeTransfers || []).forEach((transfer) => {
+      const fromAcct = String(transfer.fromUserAccount || "");
+      const toAcct = String(transfer.toUserAccount || "");
+      if (toAcct.includes(walletPrefix) && fromAcct) {
+        inboundSenders.add(fromAcct);
+        inboundCount += 1;
+      } else if (fromAcct.includes(walletPrefix) && toAcct) {
+        outboundDestinations.add(toAcct);
+        outboundCount += 1;
+      }
+    });
+    (tx.tokenTransfers || []).forEach((transfer) => {
+      const fromAcct = String(transfer.fromUserAccount || "");
+      const toAcct = String(transfer.toUserAccount || "");
+      if (toAcct.includes(walletPrefix) && fromAcct) {
+        inboundSenders.add(fromAcct);
+        inboundCount += 1;
+      } else if (fromAcct.includes(walletPrefix) && toAcct) {
+        outboundDestinations.add(toAcct);
+        outboundCount += 1;
+      }
+    });
+  });
+
+  if (inboundSenders.size >= 15 && outboundDestinations.size <= 2 && outboundCount >= 3) {
+    return {
+      inboundSenders: inboundSenders.size,
+      outboundDestinations: outboundDestinations.size,
+      inboundCount,
+      outboundCount,
+    };
+  }
+  return null;
+}
+
 function analyzeTransactions(transactions, walletAddress, options = {}) {
   const signals = [];
   const failedCount = transactions.filter((tx) => tx.transactionError).length;
@@ -582,6 +630,26 @@ function analyzeTransactions(transactions, walletAddress, options = {}) {
   const addressPoisoningSignals = findAddressPoisoningSignals(transactions, walletAddress);
   const vanityTrustSuffixAccounts = findVanityTrustSuffixAccounts(transactions);
   const rapidDispersion = findRapidDispersion(transactions, walletAddress);
+  const spokePattern = findSpokePattern(transactions, walletAddress);
+
+  // Community blocklist hit overrides everything else with a high penalty.
+  if (knownRiskyAddresses.has(walletAddress)) {
+    signals.push(makeSignal(
+      "high",
+      "Address in community blocklist",
+      "This wallet matches an address publicly flagged in security reports for phishing, asset theft, or drainer activity.",
+      80
+    ));
+  }
+
+  if (spokePattern) {
+    signals.push(makeSignal(
+      "high",
+      "Drainer spoke pattern",
+      `${spokePattern.inboundSenders} distinct senders funded this wallet but outflows go to only ${spokePattern.outboundDestinations} destination(s) - the classic 'collect-and-forward' shape used by drainer loot wallets.`,
+      36
+    ));
+  }
 
   if (riskyProgramTxs.length) {
     signals.push(makeSignal(
@@ -694,6 +762,23 @@ function analyzeTransactions(transactions, walletAddress, options = {}) {
     signals.push(makeSignal("low", "Token-account activity included", `${tokenTransfers.length} transaction${tokenTransfers.length === 1 ? "" : "s"} included token transfers or swaps.`, 4));
   }
 
+  // "Human signature" check: real users interact with diverse programs (DeFi, NFTs, swaps).
+  if (transactions.length >= 25 && tokenTransfers.length === 0) {
+    const uniquePrograms = new Set(transactions.map((tx) => getProgram(tx)));
+    const systemOnly = Array.from(uniquePrograms).every((program) => {
+      const upper = String(program || "").toUpperCase().replaceAll(" ", "_").replaceAll("-", "_");
+      return upper === "SYSTEM_PROGRAM" || upper === "UNKNOWN" || upper === "TRANSFER" || program === "11111111111111111111111111111111";
+    });
+    if (systemOnly && uniquePrograms.size <= 2) {
+      signals.push(makeSignal(
+        "medium",
+        "No DeFi or NFT footprint",
+        `${transactions.length} transactions, all of them plain SOL transfers - no DEX, NFT, or DeFi interaction. Real users typically have a more diverse footprint.`,
+        12
+      ));
+    }
+  }
+
   if (recentWindow.length > 0) {
     signals.push(makeSignal("low", "Recent wallet activity", `${recentWindow.length} transaction${recentWindow.length === 1 ? "" : "s"} occurred in the last 24 hours.`, 3));
   }
@@ -714,6 +799,26 @@ function analyzeTransactions(transactions, walletAddress, options = {}) {
     ));
   } else if (ageDays !== null && ageDays < 30 && transactions.length < 20) {
     signals.push(makeSignal("low", "Short wallet history", "The fetched wallet history is still young and shallow.", 6));
+  }
+
+  // Volume-to-age ratio: young wallet + high throughput = bot or fresh drainer.
+  if (ageDays !== null && ageDays > 0 && transactions.length >= 30) {
+    const txPerDay = transactions.length / Math.max(0.1, ageDays);
+    if (ageDays < 2 && txPerDay > 50) {
+      signals.push(makeSignal(
+        "high",
+        "Bot-like activity rate",
+        `This wallet processed ${transactions.length} transactions in under ${Math.max(1, Math.floor(ageDays))} day(s) - far above human signing rates. Likely a bot or fresh drainer.`,
+        28
+      ));
+    } else if (ageDays < 7 && txPerDay > 30) {
+      signals.push(makeSignal(
+        "medium",
+        "High activity for a young wallet",
+        `~${Math.floor(txPerDay)} transactions/day on a wallet only ${Math.floor(ageDays)} day(s) old is on the edge of bot-like behavior.`,
+        14
+      ));
+    }
   }
 
   if (!signals.length) {
