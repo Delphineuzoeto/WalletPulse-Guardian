@@ -4,7 +4,7 @@
 
 WalletPulse Guardian is an explainable Solana wallet-risk scanner. It fetches recent wallet activity, scores deterministic security signals, and turns the result into a clear `GREEN`, `YELLOW`, or `RED` verdict before a user signs or trusts an address — and before they sign a transaction, it can simulate that transaction and surface what would actually happen.
 
-**Live demo:** https://walletpulse-guardian.onrender.com
+**Live demo:** https://https://wallet-pulse-guardian.vercel.app/
 **Validation:** Tested against 5 wallet addresses publicly reported on ChainAbuse — 4 returned RED, 1 returned YELLOW.
 
 ## Two independent verdicts
