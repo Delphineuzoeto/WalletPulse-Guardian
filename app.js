@@ -1,3 +1,5 @@
+const API_BASE = (typeof window !== "undefined" && window.location && window.location.hostname === "localhost") ? "" : "https://walletpulse-guardian.onrender.com";
+
 const sampleTransactions = [
   {
     type: "TRANSFER",
@@ -342,7 +344,7 @@ async function fetchLiveTransactions(walletAddress, apiKey, limit) {
   };
 
   if (!apiKey && location.protocol !== "file:") {
-    const localResponse = await fetch("/api/helius/transactions", {
+    const localResponse = await fetch(API_BASE + "/api/helius/transactions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ walletAddress, limit })
@@ -408,7 +410,7 @@ async function fetchLiveTransactions(walletAddress, apiKey, limit) {
 
 async function fetchWalletFirstSeenTimestamp(walletAddress, apiKey) {
   if (!apiKey && location.protocol !== "file:") {
-    const response = await fetch("/api/helius/first-seen", {
+    const response = await fetch(API_BASE + "/api/helius/first-seen", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ walletAddress })
@@ -931,7 +933,7 @@ async function generateAiExplanation() {
   try {
     nodes.statusLine.textContent = "Generating AI explanation from the deterministic verdict...";
     const useLocalProxy = location.protocol !== "file:";
-    const response = await fetch(useLocalProxy ? "/api/openai/explain" : "https://api.openai.com/v1/responses", {
+    const response = await fetch(useLocalProxy ? API_BASE + "/api/openai/explain" : "https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1084,7 +1086,7 @@ async function speakWarning() {
 
   try {
     nodes.statusLine.textContent = "Generating ElevenLabs warning...";
-    const response = await fetch(apiKey && voiceId ? `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}` : "/api/elevenlabs/speech", {
+    const response = await fetch(apiKey && voiceId ? `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}` : API_BASE + "/api/elevenlabs/speech", {
       method: "POST",
       headers: apiKey && voiceId ? {
         "Content-Type": "application/json",
@@ -1354,7 +1356,7 @@ async function simulateTransaction() {
   nodes.combinedWarning.style.display = "none";
 
   try {
-    const response = await fetch("/api/helius/simulate", {
+    const response = await fetch(API_BASE + "/api/helius/simulate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -1401,7 +1403,7 @@ drawPulse();
 async function probeHealth() {
   if (location.protocol === "file:") return;
   try {
-    const response = await fetch("/api/health");
+    const response = await fetch(API_BASE + "/api/health");
     if (!response.ok) return;
     const payload = await response.json();
     const ready = [];
